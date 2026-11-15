@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "FiveM server resource that reports a roleplay server's economy to Aptic. This file is for development and tests only; the resource itself needs no npm packages.",
+  "license": "MIT",
   "scripts": {
     "test": "node --test \"tests/js/*.test.mjs\" \"tests/lua/*.test.mjs\"",
     "test:js": "node --test \"tests/js/*.test.mjs\"",

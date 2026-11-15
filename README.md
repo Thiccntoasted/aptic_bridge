@@ -7,6 +7,7 @@ The FiveM server resource that connects a roleplay server to [Aptic](https://apt
 - Server-side only. Nothing runs on players' machines.
 - HTTPS with verified TLS certificates. Requests go through a small Node.js file (`server/transport.js`), not FiveM's `PerformHttpRequest`, which doesn't check certificates.
 - The connection key never appears in the console or in logs. You only ever see its 16-character prefix, the same one the dashboard shows.
+- Open source under the MIT license, so anyone can check what it reads and sends.
 
 ## Supported servers
 
@@ -123,4 +124,8 @@ APTIC_IT_KEY_FILE=/path/to/key.txt npm run test:integration
 
 See `tests/integration/heartbeat.integration.mjs` for the environment variables it reads.
 
-`node_modules/`, `tests/`, `package.json` and the lock file are for development only. A release zip needs just `fxmanifest.lua`, `config.lua` and `server/`.
+`node_modules/`, `tests/`, `package.json` and the lock file are for development only. A release zip needs just `fxmanifest.lua`, `config.lua`, `server/` and `LICENSE`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

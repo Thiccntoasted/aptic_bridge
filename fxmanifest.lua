@@ -7,6 +7,7 @@ name 'aptic_bridge'
 description 'Reports a roleplay server\'s economy to Aptic (heartbeat in this version).'
 author 'Aptic Analytics'
 version '0.1.0'
+license 'MIT'
 
 -- Load order matters: transport.js registers the exports the Lua side calls,
 -- config.lua defines defaults, and main.lua starts everything.
