@@ -120,9 +120,11 @@ function finalizeChecks(rec) {
   }
 }
 
-describe("recorded snapshots pass Aptic's contract.ts", { skip }, () => {
+// The skip is on each test, not the describe: node --test counts skipped
+// tests in its "skipped" total (CI reports it), but not skipped suites.
+describe("recorded snapshots pass Aptic's contract.ts", () => {
   for (const [name, setup] of Object.entries(SCENARIOS)) {
-    test(name, async () => {
+    test(name, { skip }, async () => {
       const rec = await collect(setup)
       const m = rec.meta
       const now = Date.parse(m.taken_at)
@@ -174,8 +176,8 @@ describe("recorded snapshots pass Aptic's contract.ts", { skip }, () => {
   }
 })
 
-describe("validate.lua and contract.ts agree on every contract case", { skip }, () => {
-  test("accept and reject the same rows", async () => {
+describe("validate.lua and contract.ts agree on every contract case", () => {
+  test("accept and reject the same rows", { skip }, async () => {
     const resource = await createResource()
     let cases
     try {
