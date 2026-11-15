@@ -23,6 +23,7 @@
 const https = require("https")
 const http = require("http")
 const crypto = require("crypto")
+const net = require("net")
 
 const KEY_RE = /^apt_ing_[A-Za-z0-9_-]{43}$/
 const CODE_RE = /^[a-z][a-z0-9_]{0,63}$/
@@ -200,7 +201,10 @@ function createTransport(deps) {
       if (secure) {
         options.rejectUnauthorized = true
         options.minVersion = "TLSv1.2"
-        options.servername = options.hostname
+        // SNI carries host names only (RFC 6066); Node 26 refuses an IP
+        // here before connecting. The certificate is still checked
+        // against the IP either way.
+        if (!net.isIP(options.hostname)) options.servername = options.hostname
         if (tls.ca) options.ca = tls.ca
       }
 
