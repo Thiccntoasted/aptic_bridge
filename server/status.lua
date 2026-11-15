@@ -1,4 +1,5 @@
--- The `aptic` command: `aptic status` and `aptic salt`.
+-- The `aptic` command: `aptic status`, `aptic salt`, `aptic upload now` and
+-- `aptic upload status`.
 --
 -- Registered as restricted, so FiveM allows the server console (and txAdmin's
 -- live console) and players with the ACE `command.aptic`:
@@ -76,14 +77,90 @@ function M.lines()
   end
   add('instance id', Aptic.identity.instance_id() or 'unavailable')
 
-  local blockers = Aptic.heartbeat.snapshot_blockers()
-  add('snapshots', 'not in this version (heartbeat only)'
-    .. (#blockers > 0 and ('; would be blocked by: ' .. table.concat(blockers, ', ')) or ''))
+  add('snapshots', M.snapshot_line())
   if hb.latest_agent_version
     and Aptic.policy.compare_versions(Aptic.identity.version(), hb.latest_agent_version) < 0 then
     add('update', 'aptic_bridge ' .. hb.latest_agent_version .. ' is available')
   end
   return out
+end
+
+local function ago(epoch)
+  return Aptic.time.human(math.max(0, Aptic.time.now() - epoch)) .. ' ago'
+end
+
+local function last_published_text()
+  local lp = Aptic.store.get_json(Aptic.store.KVP.last_published)
+  if type(lp) ~= 'table' or type(lp.at) ~= 'number' then return nil, nil end
+  return ('%s (%s)'):format(Aptic.time.iso(lp.at), ago(lp.at)), lp
+end
+
+local function next_slot_text()
+  local wait = Aptic.scheduler.next_slot_in()
+  if not wait then return 'not scheduled yet' end
+  return ('in %s (%s)'):format(Aptic.time.human(wait), Aptic.time.iso(Aptic.time.now() + wait))
+end
+
+--- The one-line snapshot summary in `aptic status`.
+function M.snapshot_line()
+  if not Aptic.scheduler.has_collector() then
+    local blockers = Aptic.heartbeat.snapshot_blockers()
+    return 'collection not available in this version'
+      .. (#blockers > 0 and ('; would be blocked by: ' .. table.concat(blockers, ', ')) or '')
+  end
+  local published = last_published_text()
+  local parts = {
+    'last published ' .. (published or 'never'),
+    'state ' .. (Aptic.scheduler.state.collecting and 'collecting' or Aptic.uploader.describe()),
+    'next slot ' .. next_slot_text(),
+  }
+  local blockers = Aptic.heartbeat.snapshot_blockers()
+  if #blockers > 0 then parts[#parts + 1] = 'blocked by: ' .. table.concat(blockers, ', ') end
+  return table.concat(parts, '; ')
+end
+
+local function describe_outcome(last)
+  if type(last) ~= 'table' or type(last.at) ~= 'number' then return 'none yet' end
+  if last.result == 'published' then
+    return ('published %s, %d rows, %s'):format(tostring(last.snapshot_id), tonumber(last.rows) or 0, ago(last.at))
+  end
+  local where = ''
+  if last.collection then
+    where = ', ' .. tostring(last.collection) .. (last.index and (' ' .. tostring(last.index)) or '')
+      .. (last.reason and (' ' .. tostring(last.reason)) or '')
+  end
+  return ('dropped %s (%s%s), %s'):format(tostring(last.snapshot_id or '-'), tostring(last.code), where, ago(last.at))
+end
+
+--- The `aptic upload status` lines.
+function M.upload_lines()
+  local U = Aptic.uploader.state
+  local c = Aptic.config.upload
+  local now = Aptic.time.now()
+  local out = {}
+  local function add(label, value) out[#out + 1] = ('%-15s %s'):format(label, value) end
+  add('upload state', Aptic.scheduler.state.collecting and 'collecting' or Aptic.uploader.describe())
+  if U.rec and U.rec.taken_at then add('taken at', U.rec.taken_at) end
+  if U.rec and U.need and not U.waiting then
+    local wait = math.max(0, (U.next_at - Aptic.time.monotonic_ms()) / 1000)
+    add('next request', U.need .. ' in ' .. Aptic.time.human(wait))
+  end
+  add('last result', describe_outcome(U.last))
+  local published, lp = last_published_text()
+  add('last published', published and (published .. (', %d rows'):format(tonumber(lp.rows) or 0)) or 'never')
+  add('next slot', Aptic.scheduler.has_collector() and next_slot_text() or 'none: collection is not available in this version')
+  add('quota', ('%d/%d published in 24 h, %d/%d starts this hour'):format(
+    (Aptic.store.count(Aptic.store.KVP.published, now, 86400)), c.daily_guard,
+    (Aptic.store.count(Aptic.store.KVP.starts, now, 3600)), c.starts_per_hour))
+  local why = not U.rec and Aptic.scheduler.guard(now) or nil
+  if why then add('not running', why) end
+  return out
+end
+
+local function upload_now_lines()
+  local ok, why = Aptic.scheduler.request_now()
+  if ok then return { 'Snapshot queued; it starts within a second. `aptic upload status` shows progress.' } end
+  return { 'Not starting a snapshot: ' .. why .. '.' }
 end
 
 local function reply(source, lines)
@@ -123,8 +200,17 @@ function M.command(source, args)
     reply(source, M.lines())
   elseif sub == 'salt' then
     reply(source, salt_lines(source))
+  elseif sub == 'upload' then
+    local what = args[2] and tostring(args[2]):lower() or 'status'
+    if what == 'now' then
+      reply(source, upload_now_lines())
+    elseif what == 'status' then
+      reply(source, M.upload_lines())
+    else
+      reply(source, { 'usage: aptic upload now | aptic upload status' })
+    end
   else
-    reply(source, { 'usage: aptic status | aptic salt' })
+    reply(source, { 'usage: aptic status | aptic salt | aptic upload now | aptic upload status' })
   end
 end
 

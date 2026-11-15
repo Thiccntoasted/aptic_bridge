@@ -27,6 +27,30 @@ Aptic.config = {
     max_wait_s = 3600,      -- never trust a retry_after longer than an hour
   },
 
+  -- Snapshot uploads (plan §5). The ingest API's own limits are in brackets.
+  upload = {
+    interval_min = 60,          -- one snapshot an hour, at a random minute per server (D9)
+    min_interval_min = 30,      -- interval_min is kept within these bounds
+    max_interval_min = 240,
+    chunk_max_rows = 200,       -- rows per chunk [200]
+    chunk_max_bytes = 240 * 1024, -- whole chunk request body [256 KiB], 16 KiB margin
+    chunk_min_bytes = 64 * 1024,  -- floor when a 413 lowers the budget by 25%
+    max_chunk_index = 249,      -- chunks per collection: indexes 0..249 [249]
+    max_rows = 50000,           -- rows per snapshot [50,000]
+    pace_ms = 1000,             -- at most one upload request a second [120/min with heartbeats]
+    request_timeout_ms = 30000, -- start, status and chunk
+    finalize_timeout_ms = 120000, -- finalize commits the whole snapshot; the transport's maximum
+    starts_per_hour = 3,        -- start requests, retries included [12/h]
+    daily_guard = 90,           -- skip a slot at this many published in 24 h [96/24h]
+    backoff_base_s = 5,         -- 5xx, timeout, network: 5, 10, 20 ... s, full jitter
+    backoff_cap_s = 300,
+    wait_max_s = 900,           -- a start limit that frees up within 15 min is waited for;
+                                -- a longer one drops the snapshot and defers the schedule
+    not_ready_retry_s = 5,      -- waiting for a heartbeat, salt or adapter: look again in 5 s
+    resume_collected_max_s = 23 * 3600, -- a collected snapshot older than this is dropped [24 h]
+    resume_started_max_s = 55 * 60,     -- an upload started longer ago is dropped [1 h staging]
+  },
+
   -- How often the loop wakes to notice a rotated key or a newly started
   -- framework. Waking costs nothing measurable; requests follow the timings above.
   tick_ms = 1000,

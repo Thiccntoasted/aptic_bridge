@@ -36,5 +36,10 @@ server_scripts {
   'server/adapters/inv_ox.lua',
   'server/adapters/inv_qb.lua',
   'server/collector.lua',
+  -- upload engine (M3)
+  'server/chunker.lua',
+  'server/store.lua',
+  'server/uploader.lua',
+  'server/scheduler.lua',
   'server/main.lua',
 }

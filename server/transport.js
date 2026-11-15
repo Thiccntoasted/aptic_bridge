@@ -392,6 +392,91 @@ function createIdentity(deps) {
   }
 }
 
+// Snapshot chunk files (M3). FiveM's SaveResourceFile can't create folders
+// or delete anything, so the chunk store keeps its files here instead, under
+// <resource>/cache/ (gitignored). Paths are one or two names joined by "/"
+// ("<snapshot_id>" or "<snapshot_id>/<file>"); nothing else is reachable.
+// File contents never leave this function except back to Lua.
+const CACHE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+const MAX_CACHE_FILE_BYTES = 1024 * 1024
+
+/**
+ * The cache under `root` (an absolute path, or a function returning one, so
+ * the folder is looked up only when first used). Every method returns a
+ * plain value and never throws:
+ *   write(path, text)  bytes written, or false. Written to a temporary file
+ *                      and renamed, so a crash never leaves half a file.
+ *   read(path)         the text, or null when missing or unreadable
+ *   remove(path)       true when nothing is left at path (a folder goes
+ *                      with everything in it)
+ *   list()             the names directly under cache/
+ */
+function createCache(root) {
+  const fs = require("fs")
+  const path = require("path")
+  const base = function () {
+    const value = typeof root === "function" ? root() : root
+    return typeof value === "string" && value !== "" ? value : null
+  }
+  function resolve(rel) {
+    const dir = base()
+    if (!dir || typeof rel !== "string") return null
+    const parts = rel.split("/")
+    if (parts.length < 1 || parts.length > 2) return null
+    for (let i = 0; i < parts.length; i++)
+      if (!CACHE_NAME_RE.test(parts[i]) || parts[i].indexOf("..") !== -1)
+        return null
+    return path.join.apply(path, [dir].concat(parts))
+  }
+  return {
+    write: function (rel, text) {
+      try {
+        const file = resolve(rel)
+        if (!file || typeof text !== "string") return false
+        const bytes = Buffer.from(text, "utf8")
+        if (bytes.length > MAX_CACHE_FILE_BYTES) return false
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        const tmp = file + ".tmp"
+        fs.writeFileSync(tmp, bytes)
+        fs.renameSync(tmp, file)
+        return bytes.length
+      } catch (e) {
+        return false
+      }
+    },
+    read: function (rel) {
+      try {
+        const file = resolve(rel)
+        if (!file) return null
+        return fs.readFileSync(file).toString("utf8")
+      } catch (e) {
+        return null
+      }
+    },
+    remove: function (rel) {
+      try {
+        const file = resolve(rel)
+        if (!file) return false
+        fs.rmSync(file, { recursive: true, force: true })
+        return true
+      } catch (e) {
+        return false
+      }
+    },
+    list: function () {
+      try {
+        const dir = base()
+        if (!dir || !fs.existsSync(dir)) return []
+        return fs.readdirSync(dir).filter(function (n) {
+          return CACHE_NAME_RE.test(n)
+        })
+      } catch (e) {
+        return []
+      }
+    },
+  }
+}
+
 /**
  * txAdmin's player database (decision D2), read from disk.
  *
@@ -576,6 +661,7 @@ function createTxAdmin(deps) {
 
 const api = {
   createTransport: createTransport,
+  createCache: createCache,
   randomHex: randomHex,
   saltFingerprint: saltFingerprint,
   hmacHex: hmacHex,
@@ -626,6 +712,15 @@ if (
   })
   globalThis.exports("txadminLoad", txadmin.load)
   globalThis.exports("txadminLookup", txadmin.lookup)
+  const cache = createCache(function () {
+    if (typeof globalThis.GetResourcePath !== "function") return null
+    const dir = globalThis.GetResourcePath(resource)
+    return dir ? require("path").join(dir, "cache") : null
+  })
+  globalThis.exports("cacheWrite", cache.write)
+  globalThis.exports("cacheRead", cache.read)
+  globalThis.exports("cacheRemove", cache.remove)
+  globalThis.exports("cacheList", cache.list)
 }
 
 if (typeof module === "object" && module && module.exports) module.exports = api

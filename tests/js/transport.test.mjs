@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import http from "node:http"
 import https from "node:https"
 import { createRequire } from "node:module"
@@ -334,7 +334,9 @@ describe("crypto", () => {
 })
 
 describe("FiveM wiring", () => {
-  test("loaded as a FiveM script it registers httpPost, randomHex, saltFingerprint and the collector exports", async () => {
+  test("loaded as a FiveM script it registers httpPost, randomHex, saltFingerprint and the cache", async (t) => {
+    const resourceDir = mkdtempSync(join(tmpdir(), "aptic-res-"))
+    t.after(() => rmSync(resourceDir, { recursive: true, force: true }))
     const registered = {}
     const context = vm.createContext({
       require,
@@ -348,9 +350,14 @@ describe("FiveM wiring", () => {
       GetConvar: (name, fallback) => (name === "aptic_api_key" ? "" : fallback),
       GetCurrentResourceName: () => "aptic_bridge",
       GetResourceMetadata: () => "0.1.0",
+      GetResourcePath: () => resourceDir,
     })
     vm.runInContext(readFileSync(join(ROOT, "server", "transport.js"), "utf8"), context)
     assert.deepEqual(Object.keys(registered).sort(), [
+      "cacheList",
+      "cacheRead",
+      "cacheRemove",
+      "cacheWrite",
       "httpPost",
       "playerHashes",
       "pseudonymTags",
@@ -359,10 +366,62 @@ describe("FiveM wiring", () => {
       "txadminLoad",
       "txadminLookup",
     ])
+    assert.equal(registered.cacheWrite("snap-1/start.json", "{}"), 2)
+    assert.equal(readFileSync(join(resourceDir, "cache", "snap-1", "start.json"), "utf8"), "{}")
+    assert.equal(registered.cacheRemove("snap-1"), true)
     assert.match(registered.randomHex(4), /^[0-9a-f]{8}$/)
     const result = await new Promise((resolve) =>
       registered.httpPost({ endpoint: "https://aptic.dev/api/ingest/v1", payload: HEARTBEAT }, resolve)
     )
     assert.equal(result.transport_error, "no_key")
+  })
+})
+
+describe("chunk cache", () => {
+  let dir
+  let cache
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), "aptic-cache-"))
+    cache = transportJs.createCache(join(dir, "cache"))
+  })
+  after(() => rmSync(dir, { recursive: true, force: true }))
+
+  test("writes, reads back byte for byte, lists and removes a snapshot folder", () => {
+    const text = '[{"name":"José 😀","amount":-250}]'
+    assert.equal(cache.write("apb-1/balances.0.json", text), Buffer.byteLength(text))
+    assert.equal(cache.read("apb-1/balances.0.json"), text)
+    assert.deepEqual(readFileSync(join(dir, "cache", "apb-1", "balances.0.json")), Buffer.from(text, "utf8"))
+    assert.deepEqual(cache.list(), ["apb-1"])
+    assert.equal(cache.remove("apb-1"), true)
+    assert.equal(cache.read("apb-1/balances.0.json"), null)
+    assert.deepEqual(cache.list(), [])
+  })
+
+  test("an overwrite replaces the whole file and leaves no temporary file", () => {
+    cache.write("apb-2/a.json", "x".repeat(1000))
+    cache.write("apb-2/a.json", "short")
+    assert.equal(cache.read("apb-2/a.json"), "short")
+    assert.deepEqual(readdirSync(join(dir, "cache", "apb-2")), ["a.json"])
+    cache.remove("apb-2")
+  })
+
+  test("only names inside cache/ are reachable", () => {
+    for (const bad of ["../x", "a/../../x", "a/b/c", "", ".hidden", "a\b", "C:/x", "/abs", "a/", "a:b"]) {
+      assert.equal(cache.write(bad, "x"), false, bad)
+      assert.equal(cache.read(bad), null, bad)
+      assert.equal(cache.remove(bad), false, bad)
+    }
+    assert.equal(cache.write("ok", 5), false, "non-string content")
+  })
+
+  test("files over 1 MiB are refused", () => {
+    assert.equal(cache.write("apb-3/big.json", "x".repeat(1024 * 1024 + 1)), false)
+  })
+
+  test("a missing root folder reads as empty", () => {
+    const none = transportJs.createCache(() => null)
+    assert.deepEqual(none.list(), [])
+    assert.equal(none.write("a/b.json", "x"), false)
+    assert.equal(none.read("a/b.json"), null)
   })
 })

@@ -1,5 +1,6 @@
 -- Start-up: say what was found, warn about anything the owner must fix, then
--- run the heartbeat loop. Everything else lives in the other server/ files.
+-- run the heartbeat loop and the snapshot loop. Everything else lives in the
+-- other server/ files.
 
 Aptic = Aptic or {}
 
@@ -30,6 +31,9 @@ function Aptic.boot()
 
   Aptic.status.register()
   Aptic.heartbeat.start()
+  -- Snapshots: resumes an interrupted upload, then runs the hourly schedule.
+  -- Without a collector it says so once; heartbeats carry on regardless.
+  Aptic.scheduler.start()
 end
 
 CreateThread(function()
