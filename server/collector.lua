@@ -19,6 +19,12 @@
 --   sink:abort(err)           optional; called when a run fails after begin.
 --                             The rows added so far must be discarded.
 --
+-- opts.observe(kind, key, name), optional, is told about every skipped
+-- ('skipped', '<collection>.<reason>') and adjusted ('adjusted', '<reason>')
+-- row with the character name behind it when there is one (nil otherwise).
+-- Only `aptic validate --verbose` passes it; the name is never a citizenid,
+-- license, plate or any other identifier.
+--
 -- Within one snapshot every balance and vehicle owner references a
 -- character that was sent, char_ids, plates and (kind, name) are unique,
 -- and last_seen_at <= taken_at, created_at <= last_seen_at (or null).
@@ -43,20 +49,44 @@ local AMBIGUOUS = false
 -- Run state helpers
 -- ---------------------------------------------------------------------------
 
-local function skip(ctx, collection, reason)
-  bump(ctx.skipped, collection)
-  bump(ctx.skipped.reasons, collection .. '.' .. reason)
+local function observe(ctx, kind, key, name)
+  if ctx.observe then pcall(ctx.observe, kind, key, name) end
 end
 
-local function adjust(ctx, reason)
+local function skip(ctx, collection, reason, name)
+  bump(ctx.skipped, collection)
+  bump(ctx.skipped.reasons, collection .. '.' .. reason)
+  observe(ctx, 'skipped', collection .. '.' .. reason, name)
+end
+
+local function adjust(ctx, reason, name)
   bump(ctx.adjusted, reason)
+  observe(ctx, 'adjusted', reason, name)
+end
+
+--- The name of an emitted character, only while someone observes.
+local function name_of(ctx, char_id)
+  return ctx.names and type(char_id) == 'string' and ctx.names[char_id] or nil
+end
+
+--- The RP name in a framework record, only while someone observes.
+local function rec_name(ctx, rec)
+  if not ctx.observe then return nil end
+  return Aptic.common.char_name(rec.charinfo, 120)
+end
+
+local function row_name(ctx, collection, row)
+  if not ctx.observe then return nil end
+  if collection == 'characters' then return type(row.name) == 'string' and row.name or nil end
+  if collection == 'vehicles' then return name_of(ctx, row.owner_char_id) end
+  return name_of(ctx, row.char_id)
 end
 
 --- Validate and hand one row to the sink.
 local function emit(ctx, collection, row)
   local ok, field = Aptic.validate.row(collection, row)
   if not ok then
-    skip(ctx, collection, 'invalid_' .. field)
+    skip(ctx, collection, 'invalid_' .. field, row_name(ctx, collection, row))
     return false
   end
   if ctx.total >= ctx.max_rows then abort('snapshot_too_large') end
@@ -116,12 +146,12 @@ local function emit_balances(ctx, char_id, rec)
   if type(rec.money) ~= 'table' then
     -- The character is kept; with no balance rows Aptic reads its money as
     -- 0 (the contract's absent-means-zero rule), so this is counted.
-    adjust(ctx, 'money_unreadable')
+    adjust(ctx, 'money_unreadable', name_of(ctx, char_id))
     return
   end
   local cur = Aptic.config.currencies or {}
   local list, problems = Aptic.common.parse_money(rec.money, cur.rename, cur.skip)
-  for _, p in ipairs(problems) do skip(ctx, 'balances', p) end
+  for _, p in ipairs(problems) do skip(ctx, 'balances', p, name_of(ctx, char_id)) end
   for _, b in ipairs(list) do
     emit(ctx, 'balances', { char_id = char_id, currency = b.currency, amount = b.amount })
   end
@@ -148,24 +178,24 @@ local function emit_characters(ctx, recs)
     local id = rec.citizenid
     local license = license_of(rec)
     if type(id) ~= 'string' then
-      skip(ctx, 'characters', 'char_id_invalid')
+      skip(ctx, 'characters', 'char_id_invalid', rec_name(ctx, rec))
     elseif ctx.chars[id] then
-      skip(ctx, 'characters', 'char_id_duplicate')
+      skip(ctx, 'characters', 'char_id_duplicate', rec_name(ctx, rec))
     elseif not license then
-      skip(ctx, 'characters', 'license_missing')
+      skip(ctx, 'characters', 'license_missing', rec_name(ctx, rec))
     elseif not hashes[license] then
-      skip(ctx, 'characters', 'player_hash_unavailable')
+      skip(ctx, 'characters', 'player_hash_unavailable', rec_name(ctx, rec))
     else
       local last_seen = rec.online and ctx.taken or rec.last_seen_ts
       if not last_seen then
-        skip(ctx, 'characters', 'last_seen_unknown')
+        skip(ctx, 'characters', 'last_seen_unknown', rec_name(ctx, rec))
       else
         if last_seen > ctx.taken then
           last_seen = ctx.taken
-          adjust(ctx, 'last_seen_clamped')
+          adjust(ctx, 'last_seen_clamped', rec_name(ctx, rec))
         end
         local job, grade, job_problem = common.parse_job(rec.job)
-        if job_problem then adjust(ctx, job_problem) end
+        if job_problem then adjust(ctx, job_problem, rec_name(ctx, rec)) end
         local name
         if not ctx.pseudonymize then
           name = common.char_name(rec.charinfo, 120)
@@ -181,7 +211,7 @@ local function emit_characters(ctx, recs)
           -- start then, so its creation time stays unknown.
           if created and created > last_seen then
             created = nil
-            adjust(ctx, 'created_at_after_last_seen')
+            adjust(ctx, 'created_at_after_last_seen', rec_name(ctx, rec))
           end
         end
         pending[#pending + 1] = {
@@ -222,6 +252,7 @@ local function emit_characters(ctx, recs)
       skip(ctx, 'characters', 'name_unavailable')
     elseif emit(ctx, 'characters', row) then
       note_char(ctx, row.char_id)
+      if ctx.names then ctx.names[row.char_id] = row.name end
       emit_balances(ctx, row.char_id, p.rec)
     end
     ctx.y.maybe()
@@ -291,12 +322,13 @@ local function collect_vehicles(ctx)
       local plate = common.plate(rec.plate)
       local state = common.vehicle_state(rec.state)
       local model = common.clean_text(rec.vehicle, 128) or common.clean_text(rec.hash, 128)
+      local owner_name = ctx.names and name_of(ctx, (resolve_owner(ctx, rec.citizenid))) or nil
       if not plate then
-        skip(ctx, 'vehicles', 'plate_invalid')
+        skip(ctx, 'vehicles', 'plate_invalid', owner_name)
       elseif not state then
-        skip(ctx, 'vehicles', 'state_unknown')
+        skip(ctx, 'vehicles', 'state_unknown', owner_name)
       elseif not model then
-        skip(ctx, 'vehicles', 'model_missing')
+        skip(ctx, 'vehicles', 'model_missing', owner_name)
       else
         local owner, dropped = resolve_owner(ctx, rec.citizenid)
         local row = {
@@ -311,17 +343,18 @@ local function collect_vehicles(ctx)
         -- a good older one.
         local ok, field = Aptic.validate.row('vehicles', row)
         if not ok then
-          skip(ctx, 'vehicles', 'invalid_' .. field)
+          skip(ctx, 'vehicles', 'invalid_' .. field, owner_name)
         else
           local id = common.integer(rec.id) or -1
           local current = best[plate]
           if current then
             -- Plates repeat on QBCore (not unique there): keep the highest
             -- player_vehicles.id, as the contract's D5 notes say.
-            skip(ctx, 'vehicles', 'plate_duplicate')
-            if id > current.id then best[plate] = { id = id, row = row, dropped = dropped } end
+            -- The name is that of the row left out.
+            skip(ctx, 'vehicles', 'plate_duplicate', id > current.id and current.owner_name or owner_name)
+            if id > current.id then best[plate] = { id = id, row = row, dropped = dropped, owner_name = owner_name } end
           else
-            best[plate] = { id = id, row = row, dropped = dropped }
+            best[plate] = { id = id, row = row, dropped = dropped, owner_name = owner_name }
           end
         end
       end
@@ -463,6 +496,8 @@ function M.run(sink, opts)
     page = math.max(1, math.floor(tonumber(opts.page_size or conf.page_size) or 250)),
     max_rows = tonumber(opts.max_rows or conf.max_rows) or 50000,
     pseudonymize = Aptic.config.pseudonymize == true,
+    observe = type(opts.observe) == 'function' and opts.observe or nil,
+    names = type(opts.observe) == 'function' and {} or nil,
     counts = counts,
     skipped = skipped,
     adjusted = {},

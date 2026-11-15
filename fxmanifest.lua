@@ -6,7 +6,7 @@ server_only 'yes'
 dependency 'oxmysql'
 
 name 'aptic_bridge'
-description 'Reports a roleplay server\'s economy to Aptic (heartbeat in this version).'
+description 'Uploads a roleplay server\'s economy (characters, balances, vehicles, jobs) to Aptic. Read-only, hashed player ids, verified TLS.'
 author 'Aptic Analytics'
 version '0.1.0'
 license 'MIT'
@@ -41,5 +41,6 @@ server_scripts {
   'server/store.lua',
   'server/uploader.lua',
   'server/scheduler.lua',
+  'server/selfcheck.lua',  -- aptic validate
   'server/main.lua',
 }

@@ -78,6 +78,7 @@ function M.guard(t)
   if not M.has_collector() then return 'collection is not available in this version' end
   local U = Aptic.uploader.state
   if S.collecting then return 'a snapshot is being collected' end
+  if Aptic.selfcheck and Aptic.selfcheck.state.running then return 'aptic validate is running' end
   if U.rec then return 'snapshot ' .. U.rec.id .. ' is still ' .. U.rec.phase end
   if U.hold then return 'uploads are stopped (' .. U.hold.cause .. ')' end
   local blockers = Aptic.heartbeat.snapshot_blockers()

@@ -1,5 +1,5 @@
--- The `aptic` command: `aptic status`, `aptic salt`, `aptic upload now` and
--- `aptic upload status`.
+-- The `aptic` command: `aptic status`, `aptic salt`, `aptic validate
+-- [--verbose]`, `aptic upload now` and `aptic upload status`.
 --
 -- Registered as restricted, so FiveM allows the server console (and txAdmin's
 -- live console) and players with the ACE `command.aptic`:
@@ -200,6 +200,8 @@ function M.command(source, args)
     reply(source, M.lines())
   elseif sub == 'salt' then
     reply(source, salt_lines(source))
+  elseif sub == 'validate' then
+    M.validate(source, args)
   elseif sub == 'upload' then
     local what = args[2] and tostring(args[2]):lower() or 'status'
     if what == 'now' then
@@ -210,8 +212,34 @@ function M.command(source, args)
       reply(source, { 'usage: aptic upload now | aptic upload status' })
     end
   else
-    reply(source, { 'usage: aptic status | aptic salt | aptic upload now | aptic upload status' })
+    reply(source, { 'usage: aptic status | aptic salt | aptic validate [--verbose] | aptic upload now | aptic upload status' })
   end
+end
+
+--- `aptic validate [--verbose]`: collect and check without uploading, in a
+--- thread (the collector yields). Names only on the server console.
+function M.validate(source, args)
+  local verbose = false
+  for i = 2, #(args or {}) do
+    local a = tostring(args[i]):lower()
+    if a == '--verbose' or a == '-v' or a == 'verbose' then verbose = true end
+  end
+  local notes = {}
+  if verbose and source ~= CONSOLE then
+    verbose = false
+    notes[1] = '--verbose works only on the server console; showing counts only.'
+  end
+  if Aptic.selfcheck.state.running then
+    reply(source, { 'aptic validate is already running.' })
+    return
+  end
+  reply(source, { 'Checking a snapshot locally (nothing is uploaded)...' })
+  CreateThread(function()
+    local report = Aptic.selfcheck.run({ verbose = verbose })
+    local lines = Aptic.selfcheck.lines(report, { verbose = verbose, console = source == CONSOLE })
+    for _, n in ipairs(notes) do lines[#lines + 1] = n end
+    reply(source, lines)
+  end)
 end
 
 function M.register()

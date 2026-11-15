@@ -309,6 +309,8 @@ function M.abandon(code, d)
     if code == 'snapshot_invalid' then
       log().error('Aptic rejected snapshot %s at finalize (snapshot_invalid%s): a row breaks a key, reference or time rule. '
         .. 'Dropped; the next slot collects a new one. If this repeats, please report it with this line.', id, where)
+      -- Look for it locally (§5.3): the same collection, checked, never uploaded.
+      if Aptic.selfcheck then Aptic.selfcheck.after_rejection(d.collection, d.reason) end
     elseif d.conflict then
       log().error('Snapshot %s dropped (request_conflict%s). %s', id, where, ADVICE.request_conflict)
     else
