@@ -15,6 +15,10 @@
 // - Redirects are not followed, so the key is never sent to another host.
 //
 // Written for the Node 16 runtime FXServer ships by default.
+//
+// The collectors (M2) also use this file for local work Lua can't do: HMAC
+// player hashes from the pinned salt, and reading txAdmin's playersDB.json.
+// See the second half of the file.
 
 const https = require("https")
 const http = require("http")
@@ -303,10 +307,280 @@ function saltFingerprint(salt) {
     .slice(0, 8)
 }
 
+// ---------------------------------------------------------------------------
+// Collectors (M2): player identity hashing and txAdmin's playersDB.json.
+// Both read local data only; neither touches the network or logs.
+// ---------------------------------------------------------------------------
+
+const SALT_RE = /^[0-9a-f]{64}$/
+const MAX_ID_LENGTH = 256
+const MAX_BATCH = 5000
+
+/**
+ * HMAC-SHA256 as lowercase hex. The key is the salt's 32 bytes (the pinned
+ * value is 64 hex characters), so owners can reproduce a player_hash with
+ * `printf 'aptic.v1|license:...' | openssl dgst -sha256 -mac HMAC -macopt hexkey:<salt>`.
+ */
+function hmacHex(saltHex, message) {
+  const salt = String(saltHex || "")
+  if (!SALT_RE.test(salt)) throw new Error("hmacHex: salt must be 64 lowercase hex")
+  return crypto
+    .createHmac("sha256", Buffer.from(salt, "hex"))
+    .update(String(message), "utf8")
+    .digest("hex")
+}
+
+/** Lua sequences arrive as arrays (FXServer) or as {1: .., 2: ..} objects. */
+function listOf(value) {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === "object") return Object.values(value)
+  return []
+}
+
+/**
+ * Hashing that reads the pinned salt from the aptic_salt convar itself, so
+ * the salt never travels through Lua call arguments and nothing but the
+ * pinned value can be used. Every answer carries the salt fingerprint, so
+ * the caller can tell if the salt changed in the middle of a run.
+ */
+function createIdentity(deps) {
+  const getConvar = deps.getConvar
+
+  function pinnedSalt() {
+    const salt = String(getConvar("aptic_salt", "") || "")
+      .trim()
+      .toLowerCase()
+    return SALT_RE.test(salt) ? salt : null
+  }
+
+  function many(values, prefix, field, transform) {
+    const salt = pinnedSalt()
+    if (!salt) return { error: "salt_not_pinned" }
+    const list = listOf(values)
+    if (list.length > MAX_BATCH) return { error: "batch_too_large" }
+    const out = {}
+    list.forEach(function (value) {
+      if (typeof value !== "string" || value.length < 1 || value.length > MAX_ID_LENGTH) return
+      out[value] = transform(hmacHex(salt, prefix + value.toLowerCase()))
+    })
+    const result = { salt_fp: saltFingerprint(salt) }
+    result[field] = out
+    return result
+  }
+
+  return {
+    /**
+     * player_hash for each license string:
+     * hex(HMAC-SHA256(salt, "aptic.v1|" + lower(license))).
+     * Returns { salt_fp, hashes: { [license]: hash } } or { error }.
+     */
+    playerHashes: function (licenses) {
+      return many(licenses, "aptic.v1|", "hashes", function (h) {
+        return h
+      })
+    },
+    /**
+     * A stable 8-hex tag per character for pseudonymized names (D7):
+     * the first 8 hex of HMAC-SHA256(salt, "aptic.v1.name|" + lower(char_id)).
+     * Returns { salt_fp, tags: { [char_id]: tag } } or { error }.
+     */
+    pseudonymTags: function (charIds) {
+      return many(charIds, "aptic.v1.name|", "tags", function (h) {
+        return h.slice(0, 8)
+      })
+    },
+  }
+}
+
+/**
+ * txAdmin's player database (decision D2), read from disk.
+ *
+ * Checked against txAdmin's source (github.com/tabarra/txAdmin, master @
+ * 1db5eb0d, 23 Oct 2026):
+ * - File: `${profilePath}/data/playersDB.json`, where profilePath is
+ *   `<dataPath>/<profile>` (core/modules/Database/instance.ts).
+ * - dataPath (core/globalData.ts): the TXHOST_DATA_PATH environment
+ *   variable, else the deprecated `txDataPath` convar (relative values are
+ *   resolved with path.resolve, core/boot/getNativeVars.ts), else
+ *   `<citizen_root>/../txData` on Windows and `<citizen_root>/../../../txData`
+ *   elsewhere. profile: the deprecated `serverProfile` convar with
+ *   [^a-z0-9._-] removed, else "default".
+ * - Shape (core/modules/Database/databaseTypes.ts): { version, players: [
+ *   { license, ids, hwids, displayName, pureName, playTime,
+ *   tsLastConnection, tsJoined, ... } ], actions, ... }.
+ * - playTime is in MINUTES: ServerPlayer#minuteCron adds 1 every 60_000 ms
+ *   (core/lib/player/playerClasses.ts).
+ * - tsJoined is the first join, in unix SECONDS: it is set from
+ *   tsConnected = now(), and now() is Math.round(Date.now() / 1000)
+ *   (core/lib/misc.ts).
+ * - license is the lowercased hex value without the "license:" prefix
+ *   (parsePlayerIds, core/lib/player/idUtils.ts); `ids` holds the full
+ *   prefixed identifiers, including license2:.
+ * - txAdmin writes the file through lowdb's TextFile (steno: write a temp
+ *   file, then rename), so a read sees a whole old or whole new file. A read
+ *   that still fails (a Windows rename race) counts as unreadable for that
+ *   run: values are sent as null, never guessed.
+ *
+ * Only playtime and first-join time leave this module. Display names, hwids,
+ * other identifiers, notes and actions are never returned.
+ */
+function createTxAdmin(deps) {
+  const fs = deps.fs
+  const path = deps.path
+  const getConvar = deps.getConvar
+  const env = deps.env || {}
+  const platform = deps.platform || "linux"
+  let cache = null
+
+  function convar(name) {
+    const v = String(getConvar(name, "") || "").trim()
+    return v === "" ? null : v
+  }
+
+  /** Where the file should be: { file, source } or { error }. */
+  function locate(override) {
+    if (typeof override === "string" && override.trim() !== "")
+      return { file: path.resolve(override.trim()), source: "config" }
+    let dataPath
+    let source
+    if (typeof env.TXHOST_DATA_PATH === "string" && env.TXHOST_DATA_PATH.trim() !== "") {
+      dataPath = env.TXHOST_DATA_PATH.trim()
+      source = "env"
+    } else if (convar("txDataPath")) {
+      dataPath = path.resolve(convar("txDataPath"))
+      source = "convar"
+    } else if (convar("citizen_root")) {
+      dataPath = path.join(
+        convar("citizen_root"),
+        platform === "win32" ? ".." : "../../../",
+        "txData"
+      )
+      source = "default"
+    } else {
+      return { error: "no_path" }
+    }
+    const profile = (convar("serverProfile") || "").replace(/[^a-z0-9._-]/gi, "") || "default"
+    return { file: path.join(dataPath, profile, "data", "playersDB.json"), source: source }
+  }
+
+  function entryOf(p) {
+    const playtime =
+      Number.isInteger(p.playTime) && p.playTime >= 0 && p.playTime <= 2147483647
+        ? p.playTime
+        : null
+    const joined =
+      typeof p.tsJoined === "number" && Number.isFinite(p.tsJoined) && p.tsJoined > 0
+        ? Math.floor(p.tsJoined)
+        : null
+    return { playtime_minutes: playtime, joined_ts: joined }
+  }
+
+  function buildIndex(players) {
+    const index = new Map()
+    const add = function (key, entry) {
+      if (!index.has(key)) index.set(key, entry)
+      else if (index.get(key) !== entry) index.set(key, null) // two players claim one id: unknown
+    }
+    players.forEach(function (p) {
+      if (!p || typeof p !== "object") return
+      const entry = entryOf(p)
+      if (typeof p.license === "string" && p.license.trim() !== "")
+        add("license:" + p.license.trim().toLowerCase(), entry)
+      listOf(p.ids).forEach(function (id) {
+        if (typeof id !== "string") return
+        const lower = id.trim().toLowerCase()
+        if (lower.indexOf("license:") === 0 || lower.indexOf("license2:") === 0) add(lower, entry)
+      })
+    })
+    return index
+  }
+
+  /**
+   * Read (or reuse) the file. Returns { state, source, players }, state one
+   * of ok | absent | unreadable | invalid. Never the path or any content.
+   */
+  function load(override) {
+    const where = locate(override)
+    if (where.error) {
+      cache = null
+      return { state: "absent", players: 0 }
+    }
+    let stat
+    try {
+      stat = fs.statSync(where.file)
+    } catch (e) {
+      cache = null
+      const missing = e && (e.code === "ENOENT" || e.code === "ENOTDIR")
+      return { state: missing ? "absent" : "unreadable", source: where.source, players: 0 }
+    }
+    if (
+      cache &&
+      cache.file === where.file &&
+      cache.mtimeMs === stat.mtimeMs &&
+      cache.size === stat.size
+    )
+      return { state: "ok", source: where.source, players: cache.players }
+    let parsed
+    try {
+      parsed = JSON.parse(fs.readFileSync(where.file, "utf8"))
+    } catch (e) {
+      cache = null
+      return { state: "unreadable", source: where.source, players: 0 }
+    }
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.players)) {
+      cache = null
+      return { state: "invalid", source: where.source, players: 0 }
+    }
+    cache = {
+      file: where.file,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      players: parsed.players.length,
+      index: buildIndex(parsed.players),
+    }
+    return { state: "ok", source: where.source, players: cache.players }
+  }
+
+  /**
+   * Values for the given license strings as the game DB stores them
+   * ("license:<hex>", "license2:<hex>", or bare hex). Returns
+   * { [license]: { playtime_minutes?, joined_ts? } } for the ones txAdmin
+   * knows; a field txAdmin has no valid value for is left out.
+   */
+  function lookup(licenses) {
+    const out = {}
+    if (!cache) return out
+    const list = listOf(licenses)
+    if (list.length > MAX_BATCH) return out
+    list.forEach(function (value) {
+      if (typeof value !== "string" || value.length > MAX_ID_LENGTH) return
+      const lower = value.trim().toLowerCase()
+      const key = lower.indexOf(":") === -1 ? "license:" + lower : lower
+      const entry = cache.index.get(key)
+      if (!entry) return
+      // Unknown fields are left out rather than null: Lua has no null.
+      const found = {}
+      if (entry.playtime_minutes !== null) found.playtime_minutes = entry.playtime_minutes
+      if (entry.joined_ts !== null) found.joined_ts = entry.joined_ts
+      out[value] = found
+    })
+    return out
+  }
+
+  function forget() {
+    cache = null
+  }
+
+  return { locate: locate, load: load, lookup: lookup, forget: forget }
+}
+
 const api = {
   createTransport: createTransport,
   randomHex: randomHex,
   saltFingerprint: saltFingerprint,
+  hmacHex: hmacHex,
+  createIdentity: createIdentity,
+  createTxAdmin: createTxAdmin,
   KEY_RE: KEY_RE,
 }
 
@@ -334,6 +608,24 @@ if (
   })
   globalThis.exports("randomHex", randomHex)
   globalThis.exports("saltFingerprint", saltFingerprint)
+
+  // Collectors (M2).
+  const getConvar = function (name, fallback) {
+    return globalThis.GetConvar(name, fallback)
+  }
+  const identity = createIdentity({ getConvar: getConvar })
+  globalThis.exports("playerHashes", identity.playerHashes)
+  globalThis.exports("pseudonymTags", identity.pseudonymTags)
+  const proc = require("process")
+  const txadmin = createTxAdmin({
+    fs: require("fs"),
+    path: require("path"),
+    getConvar: getConvar,
+    env: proc.env,
+    platform: proc.platform,
+  })
+  globalThis.exports("txadminLoad", txadmin.load)
+  globalThis.exports("txadminLookup", txadmin.lookup)
 }
 
 if (typeof module === "object" && module && module.exports) module.exports = api
