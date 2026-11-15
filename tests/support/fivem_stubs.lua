@@ -15,6 +15,7 @@ function Stub.reset()
   Stub.threads = {}
   Stub.export_overrides = {}
   Stub.self_version = '0.1.0'
+  Stub.players = {}
 end
 Stub.reset()
 
@@ -61,6 +62,13 @@ function SetResourceKvp(key, value) Stub.kvp[key] = value end
 function DeleteResourceKvp(key) Stub.kvp[key] = nil end
 
 function GetGameTimer() return Stub.timer end
+
+-- Connected player server ids, as strings (FiveM's GetPlayers()).
+function GetPlayers()
+  local out = {}
+  for i, id in ipairs(Stub.players) do out[i] = tostring(id) end
+  return out
+end
 
 function print(...)
   local parts = {}
@@ -112,3 +120,6 @@ exports = setmetatable({}, {
     })
   end,
 })
+
+-- FiveM's global json library.
+dofile('tests/support/json.lua')

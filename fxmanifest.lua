@@ -23,5 +23,8 @@ server_scripts {
   'server/policy.lua',
   'server/heartbeat.lua',
   'server/status.lua',
+  -- collectors (M2)
+  'server/adapters/common.lua',
+  'server/validate.lua',
   'server/main.lua',
 }
