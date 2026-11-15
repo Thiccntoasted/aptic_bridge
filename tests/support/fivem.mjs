@@ -6,8 +6,14 @@
 //
 // Scripts load in the order fxmanifest.lua lists them, so tests run the
 // same files, in the same order, as the server.
+//
+// Each resource gets its own folder (GetResourcePath), so the chunk cache
+// writes real files; a test can hand the same folder to a second resource to
+// play a restart. Strings cross from Lua to JS as UTF-8, as they do on
+// FXServer (wasmoon on its own passes Lua strings byte by byte).
 
-import { readFileSync, readdirSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { createRequire } from "node:module"
 import { dirname, join, relative } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -35,11 +41,37 @@ function luaFiles(dir) {
 }
 
 /**
+ * A Lua string as FXServer hands it to JS: its bytes read as UTF-8. wasmoon
+ * sometimes decodes UTF-8 itself and sometimes passes one char per byte, so
+ * a string is re-read only when it is clearly the byte-wise form (all chars
+ * below 256 and valid UTF-8 as bytes). Applied through tables too.
+ */
+function utf8FromBytes(s) {
+  if (!/[\u0080-ÿ]/.test(s) || /[^\u0000-ÿ]/.test(s)) return s
+  const bytes = Buffer.from(s, "latin1")
+  const text = bytes.toString("utf8")
+  return Buffer.from(text, "utf8").equals(bytes) ? text : s
+}
+
+export function fromLua(value, depth = 0) {
+  if (typeof value === "string") return utf8FromBytes(value)
+  if (depth > 20 || !value || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map((v) => fromLua(v, depth + 1))
+  const out = {}
+  for (const k of Object.keys(value)) out[k] = fromLua(value[k], depth + 1)
+  return out
+}
+
+/**
  * A fresh Lua state with the stubs, the test helpers and every manifest
  * script loaded. `extra` lists more Lua files (relative to the repo) to load
- * afterwards, such as a test file.
+ * afterwards, such as a test file. `resourcePath` is the resource folder
+ * (cache files go to <resourcePath>/cache); without it a temporary folder is
+ * made and removed on close().
  */
-export async function createResource({ extra = [] } = {}) {
+export async function createResource({ extra = [], resourcePath } = {}) {
+  const ownFolder = !resourcePath
+  const folder = resourcePath ?? mkdtempSync(join(tmpdir(), "aptic-resource-"))
   const factory = new LuaFactory()
   const scripts = manifestScripts()
   const files = new Set([
@@ -71,10 +103,11 @@ export async function createResource({ extra = [] } = {}) {
     exports: (name, fn) => {
       jsExports[name] = fn
     },
-    GetConvar: (name, fallback) => luaGlobal("GetConvar")(name, fallback),
+    GetConvar: (name, fallback) => fromLua(luaGlobal("GetConvar")(name, fallback)),
     GetCurrentResourceName: () => "aptic_bridge",
     GetResourceMetadata: (res, key, i) =>
-      luaGlobal("GetResourceMetadata")(res, key, i),
+      fromLua(luaGlobal("GetResourceMetadata")(res, key, i)),
+    GetResourcePath: () => folder,
   })
   for (const script of scripts.filter((s) => s.endsWith(".js"))) {
     vm.runInContext(readFileSync(join(ROOT, script), "utf8"), context, {
@@ -84,8 +117,12 @@ export async function createResource({ extra = [] } = {}) {
   lua.global.set("__js_export", (name, ...args) => {
     const fn = jsExports[name]
     if (!fn) throw new Error(`no JS export ${name}`)
-    return fn(...args)
+    return fn(...args.map((a) => fromLua(a)))
   })
+  // Strict JSON parsing for the fake Aptic in tests (null becomes nil).
+  lua.global.set("__json_parse", (text) => withoutNulls(JSON.parse(fromLua(text))))
+  // The Lua scripts in load order, so a test can load them again (a restart).
+  lua.global.set("__manifest_lua", scripts.filter((s) => s.endsWith(".lua")))
 
   for (const script of scripts.filter((s) => s.endsWith(".lua")))
     lua.doStringSync(`dofile(${JSON.stringify(script)})`)
@@ -94,9 +131,13 @@ export async function createResource({ extra = [] } = {}) {
   return {
     lua,
     jsExports,
+    resourcePath: folder,
     /** Run Lua and return its value. */
     run: (code) => lua.doStringSync(code),
-    close: () => lua.global.close(),
+    close: () => {
+      lua.global.close()
+      if (ownFolder) rmSync(folder, { recursive: true, force: true })
+    },
   }
 }
 
