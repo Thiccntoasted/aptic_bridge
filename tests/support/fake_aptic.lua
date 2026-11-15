@@ -60,7 +60,8 @@ function FakeAptic.new()
 
   function srv:take_fault(p)
     for i, f in ipairs(self.faults) do
-      if (f.op == nil or f.op == p.operation)
+      -- A fault without op never hits heartbeats.
+      if ((f.op == nil and p.operation ~= 'heartbeat') or f.op == p.operation)
         and (f.collection == nil or f.collection == p.collection)
         and (f.index == nil or f.index == p.index) then
         f.times = f.times - 1
@@ -174,7 +175,7 @@ function FakeAptic.new()
     local p = __json_parse(body)
     self.log[#self.log + 1] = { op = p.operation, collection = p.collection, index = p.index, body = body,
       timeout_ms = req.timeout_ms, at_ms = Stub.timer, key = self:key() }
-    local f = p.operation ~= 'heartbeat' and self:take_fault(p) or nil
+    local f = self:take_fault(p)
     if f and not f.after then return f.result end
     local result = self:apply(p, body)
     if f then return f.result end
