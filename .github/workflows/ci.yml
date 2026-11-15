@@ -1,0 +1,64 @@
+# Tests and the release build on every push and pull request.
+#
+# The contract-parity tests need Aptic's contract.ts, which is not in this
+# repository. Without it they are skipped, never passed or failed; the
+# "Report skipped tests" step turns that into a visible notice.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-output.txt
+
+      - name: Report skipped tests
+        if: always()
+        shell: bash
+        run: |
+          [ -f test-output.txt ] || exit 0
+          # The spec reporter prints "ℹ skipped N", the TAP reporter "# skipped N".
+          skipped=$(grep -E '^(ℹ|#) skipped [0-9]+' test-output.txt | tail -1 | grep -oE '[0-9]+$' || true)
+          {
+            echo "## Tests"
+            grep -E '^(ℹ|#) (tests|pass|fail|skipped) [0-9]+' test-output.txt || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${skipped:-0}" != "0" ]; then
+            echo "::notice title=Contract parity skipped::${skipped} tests were skipped, not passed: Aptic's contract.ts is not available here. Set APTIC_CONTRACT_TS or check out the Aptic repository next to this one to run them."
+            {
+              echo
+              echo "**${skipped} tests skipped** (contract parity: Aptic's contract.ts not available)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            grep -E '# SKIP|﹣' test-output.txt || true
+          fi
+
+      - name: Build the release zip
+        run: npm run release -- --list
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aptic_bridge-release
+          path: dist/*.zip
+          if-no-files-found: error
