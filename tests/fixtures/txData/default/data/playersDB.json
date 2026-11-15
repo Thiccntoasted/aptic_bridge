@@ -1,0 +1,109 @@
+{
+  "version": 5,
+  "players": [
+    {
+      "license": "99887766554433221100ffeeddccbbaa99887766",
+      "ids": [
+        "license:99887766554433221100ffeeddccbbaa99887766",
+        "license2:a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+        "discord:271828182845904523",
+        "steam:110000112345678"
+      ],
+      "hwids": ["2:aa11bb22cc33dd44ee55ff6600112233445566778899aabbccddeeff00112233"],
+      "displayName": "MarcusTx",
+      "pureName": "marcustx",
+      "playTime": 1290,
+      "tsLastConnection": 1794344700,
+      "tsJoined": 1772323200,
+      "notes": { "text": "warned for VDM", "lastAdmin": "admin1", "tsLastEdit": 1790000000 }
+    },
+    {
+      "license": "77665544332211009988aabbccddeeff00112233",
+      "ids": [
+        "license:77665544332211009988aabbccddeeff00112233",
+        "license2:c3d4e5f60718293a4b5c6d7e8f9012345678a1b2",
+        "fivem:4815162"
+      ],
+      "hwids": [],
+      "displayName": "Juniper",
+      "pureName": "juniper",
+      "playTime": 845,
+      "tsLastConnection": 1794696000,
+      "tsJoined": 1775001600
+    },
+    {
+      "license": "5544332211009988aabbccddeeff001122334455",
+      "ids": [
+        "license:5544332211009988aabbccddeeff001122334455",
+        "license2:d4e5f60718293a4b5c6d7e8f9012345678a1b2c3"
+      ],
+      "hwids": [],
+      "displayName": "Half Minute",
+      "pureName": "halfminute",
+      "playTime": 12.5,
+      "tsLastConnection": 1794474900,
+      "tsJoined": 1771070400
+    },
+    {
+      "license": "33221100998877665544aabbccddeeff00112233",
+      "ids": [
+        "license:33221100998877665544aabbccddeeff00112233",
+        "license2:0718293a4b5c6d7e8f9012345678a1b2c3d4e5f6"
+      ],
+      "hwids": [],
+      "displayName": "Late Joiner",
+      "pureName": "latejoiner",
+      "playTime": 30,
+      "tsLastConnection": 1780272000,
+      "tsJoined": 1780272000
+    },
+    {
+      "license": "1a2b3c4d5e6f708192a3b4c5d6e7f80910111213",
+      "ids": [
+        "license:1a2b3c4d5e6f708192a3b4c5d6e7f80910111213",
+        "xbl:2535411111111111",
+        "live:1055518111111111"
+      ],
+      "hwids": [],
+      "displayName": "Dario",
+      "pureName": "dario",
+      "playTime": 5400,
+      "tsLastConnection": 1794344700,
+      "tsJoined": 1759968000
+    },
+    {
+      "license": "2b3c4d5e6f708192a3b4c5d6e7f8091011121314",
+      "ids": ["license:2b3c4d5e6f708192a3b4c5d6e7f8091011121314"],
+      "hwids": [],
+      "displayName": "Newcomer",
+      "pureName": "newcomer",
+      "playTime": 0,
+      "tsLastConnection": 1764979200,
+      "tsJoined": 1764979200
+    },
+    {
+      "license": "3c4d5e6f708192a3b4c5d6e7f809101112131415",
+      "ids": ["license:3c4d5e6f708192a3b4c5d6e7f809101112131415"],
+      "hwids": [],
+      "displayName": "Regular",
+      "pureName": "regular",
+      "playTime": 20160,
+      "tsLastConnection": 1794696000,
+      "tsJoined": 1768003200
+    }
+  ],
+  "actions": [
+    {
+      "id": "WARN-A1B2",
+      "type": "warn",
+      "ids": ["license:99887766554433221100ffeeddccbbaa99887766"],
+      "playerName": "MarcusTx",
+      "reason": "VDM",
+      "author": "admin1",
+      "timestamp": 1790000000,
+      "revocation": { "timestamp": null, "author": null }
+    }
+  ],
+  "whitelistApprovals": [],
+  "whitelistRequests": []
+}

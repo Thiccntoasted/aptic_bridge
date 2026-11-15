@@ -18,12 +18,19 @@ import { LuaFactory } from "wasmoon"
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const require = createRequire(import.meta.url)
 
-/** server_scripts from fxmanifest.lua, in order. */
-export function manifestScripts() {
+/** Every server_scripts entry in fxmanifest.lua, in order, including
+ * other resources' files (`@oxmysql/lib/MySQL.lua`). */
+export function manifestEntries() {
   const manifest = readFileSync(join(ROOT, "fxmanifest.lua"), "utf8")
   const block = manifest.match(/server_scripts\s*\{([\s\S]*?)\}/)
   if (!block) throw new Error("fxmanifest.lua has no server_scripts block")
   return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+}
+
+/** This resource's own server_scripts, in order. Files from other
+ * resources (`@oxmysql/...`) are left out: tests stub what they provide. */
+export function manifestScripts() {
+  return manifestEntries().filter((s) => !s.startsWith("@"))
 }
 
 const posix = (p) => p.split("\\").join("/")
@@ -42,9 +49,11 @@ function luaFiles(dir) {
 export async function createResource({ extra = [] } = {}) {
   const factory = new LuaFactory()
   const scripts = manifestScripts()
+  // tests/fixtures holds Lua data files that tests load with dofile().
   const files = new Set([
     ...scripts.filter((s) => s.endsWith(".lua")),
     ...luaFiles("tests/support"),
+    ...luaFiles("tests/fixtures"),
     ...extra,
   ])
   for (const file of files)

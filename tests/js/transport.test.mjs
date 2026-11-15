@@ -334,7 +334,7 @@ describe("crypto", () => {
 })
 
 describe("FiveM wiring", () => {
-  test("loaded as a FiveM script it registers httpPost, randomHex, saltFingerprint", async () => {
+  test("loaded as a FiveM script it registers httpPost, randomHex, saltFingerprint and the collector exports", async () => {
     const registered = {}
     const context = vm.createContext({
       require,
@@ -350,7 +350,15 @@ describe("FiveM wiring", () => {
       GetResourceMetadata: () => "0.1.0",
     })
     vm.runInContext(readFileSync(join(ROOT, "server", "transport.js"), "utf8"), context)
-    assert.deepEqual(Object.keys(registered).sort(), ["httpPost", "randomHex", "saltFingerprint"])
+    assert.deepEqual(Object.keys(registered).sort(), [
+      "httpPost",
+      "playerHashes",
+      "pseudonymTags",
+      "randomHex",
+      "saltFingerprint",
+      "txadminLoad",
+      "txadminLookup",
+    ])
     assert.match(registered.randomHex(4), /^[0-9a-f]{8}$/)
     const result = await new Promise((resolve) =>
       registered.httpPost({ endpoint: "https://aptic.dev/api/ingest/v1", payload: HEARTBEAT }, resolve)

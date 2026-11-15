@@ -34,4 +34,34 @@ Aptic.config = {
   -- `aptic` console command. Players need this ACE to run it in game:
   --   add_ace group.admin command.aptic allow
   command = 'aptic',
+
+  -- Character names (decision D7). false: send each character's RP name
+  -- from charinfo. true: send "Character 1a2b3c4d" instead, a stable tag
+  -- derived from the hash salt and the citizenid, the same every snapshot.
+  pseudonymize = false,
+
+  -- Snapshot collection. Reads are SELECT-only and paged.
+  collector = {
+    page_size = 250,        -- rows per query (keyset pagination)
+    yield_ms = 2,           -- yield to the server after this much work in one tick
+    max_rows = 50000,       -- Aptic's per-snapshot cap; a bigger snapshot is not sent
+  },
+
+  -- Money types (players.money keys). Every type is sent under its own
+  -- lowercase code (cash, bank, crypto, and custom ones). Rename a type or
+  -- leave one out here, for example:
+  --   rename = { blackmoney = 'dirty' },
+  --   skip = { casino_chips = true },
+  currencies = {
+    rename = {},
+    skip = {},
+  },
+
+  -- created_at and playtime come from txAdmin's player database (decision
+  -- D2), found automatically while txAdmin runs this server. Set players_db
+  -- to the full path of playersDB.json only if it lives somewhere unusual.
+  txadmin = {
+    enabled = true,
+    players_db = '',
+  },
 }
