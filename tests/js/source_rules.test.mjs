@@ -47,7 +47,7 @@ test("the manifest is server-only Lua 5.4 on cerulean", () => {
 })
 
 test("docs and config tell owners to use set, never setr or sets", () => {
-  for (const file of ["README.md", "config.lua"]) {
+  for (const file of ["README.md", "INSTALL.md", "config.lua"]) {
     const text = source(file)
     assert.match(text, /set aptic_api_key "/, file)
     assert.doesNotMatch(text, /^\s*sets?r\s+aptic_/m, `${file} shows setr`)
