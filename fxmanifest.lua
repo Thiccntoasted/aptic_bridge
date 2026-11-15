@@ -23,5 +23,10 @@ server_scripts {
   'server/policy.lua',
   'server/heartbeat.lua',
   'server/status.lua',
+  -- upload engine (M3)
+  'server/chunker.lua',
+  'server/store.lua',
+  'server/uploader.lua',
+  'server/scheduler.lua',
   'server/main.lua',
 }
