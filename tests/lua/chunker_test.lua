@@ -314,3 +314,45 @@ test('chunk bodies have a fixed field order', function()
   eq(C().chunk_body('apb-1', 'jobs', 3, '[{"a":1}]'),
     '{"version":1,"operation":"chunk","snapshot_id":"apb-1","collection":"jobs","index":3,"rows":[{"a":1}]}')
 end)
+
+-- The collector's conventions (collector.lua, M2) ---------------------------------
+
+test('tables marked with Aptic.common.ARRAY_MT encode as arrays, [] when empty', function()
+  Aptic.common = Aptic.common or {}
+  Aptic.common.ARRAY_MT = Aptic.common.ARRAY_MT or { __name = 'array' }
+  local arr = function(t) return setmetatable(t, Aptic.common.ARRAY_MT) end
+  eq(C().encode({ grades = arr({}) }), '{"grades":[]}')
+  eq(C().encode({ grades = arr({ { level = 0, name = 'A' }, { level = 4, name = 'B' } }) }),
+    '{"grades":[{"level":0,"name":"A"},{"level":4,"name":"B"}]}')
+end)
+
+test('collector-style meta: ARRAY_MT capabilities, online_count, all 8 counts with zeros', function()
+  Aptic.common = Aptic.common or {}
+  Aptic.common.ARRAY_MT = Aptic.common.ARRAY_MT or {}
+  local sink = memory_sink()
+  truthy(sink:begin({
+    taken_at = '2026-11-15T12:00:00Z', framework = 'qbox', inventory = 'ox_inventory',
+    capabilities = setmetatable({ 'characters', 'balances', 'online_count' }, Aptic.common.ARRAY_MT),
+    online_count = 12, salt_fp = '49224dd5',
+  }))
+  sink:add('characters', { char_id = 'c1' })
+  truthy(sink:finish({ characters = 1, balances = 0, containers = 0, item_stacks = 0,
+    vehicles = 0, activity = 0, registry = 0, jobs = 0 }))
+  local p = sink:start_payload({})
+  eq(p.online_count, 12)
+  contains(C().encode(p), '"capabilities":["characters","balances","online_count"]')
+end)
+
+test('sink:abort discards the run and records the collector\'s code', function()
+  local sink, files = memory_sink()
+  sink:begin(META)
+  sink:add('characters', { char_id = 'c1' })
+  sink:abort('query_failed')
+  eq(sink.failed.code, 'query_failed')
+  eq(select(2, sink:finish()), 'query_failed', 'finish after abort does nothing')
+  eq(next(files), nil, 'the open chunk was never written')
+  local s2 = memory_sink()
+  s2:begin(META)
+  s2:abort('a message with spaces and a name')
+  eq(s2.failed.code, 'collector_failed', 'only code-shaped errors are kept')
+end)

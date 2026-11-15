@@ -17,7 +17,10 @@
 --                             online_count (only with the online_count capability) }
 --   sink:add(collection, row) -> true | false, code   (stop collecting on false)
 --   sink:finish(counts)       -> true | false, code   counts = { [collection] = n }
--- Rows are Lua tables in the contract's exact shape. A table with no keys is
+--   sink:abort(err)           the run failed after begin; nothing is kept
+--                             (the uploader deletes the snapshot's files)
+-- Rows are Lua tables in the contract's exact shape. A table with
+-- Aptic.common.ARRAY_MT is always an array; any table with no keys is
 -- encoded as [] (allowed_jobs = {}), so empty objects can't be expressed;
 -- the contract has none. Absent (nil) fields are left out, which the contract
 -- reads as null. Aptic.chunker.NULL forces an explicit null.
@@ -103,8 +106,18 @@ end
 
 local encode_value
 
+local function marked_array(t)
+  local common = Aptic.common
+  return common ~= nil and common.ARRAY_MT ~= nil and getmetatable(t) == common.ARRAY_MT
+end
+
 local function encode_table(t, depth)
   if depth > 32 then error('json: nested too deeply', 0) end
+  if marked_array(t) then -- the collector's explicit array marker (grades, capabilities)
+    local out = {}
+    for i = 1, rawlen(t) do out[i] = encode_value(rawget(t, i), depth + 1) end
+    return '[' .. table.concat(out, ',') .. ']'
+  end
   local n, count = #t, 0
   for _ in pairs(t) do count = count + 1 end
   if count == n then -- an array (or empty: [])
@@ -405,6 +418,14 @@ function Sink:add(collection, row)
   self.counts[collection] = (self.counts[collection] or 0) + 1
   self.total = self.total + 1
   return true
+end
+
+--- The collector gave up after begin: keep nothing. finish() won't come.
+--- `err` becomes the snapshot's outcome code when it looks like one.
+function Sink:abort(err)
+  local code = type(err) == 'string' and #err <= 64 and err:match('^[%a][%w_]*$') and err or 'collector_failed'
+  self.open = {}
+  return self:fail(code)
 end
 
 --- Close every open chunk and check the collector's counts against ours.

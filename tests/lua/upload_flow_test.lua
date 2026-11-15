@@ -728,3 +728,24 @@ test('no log line ever holds a row, a body or a server error body', function()
   end
   eq(#srv.published, 1)
 end)
+
+test('a collector that aborts after writing chunks: dropped with its code, files deleted', function()
+  local srv = UP.setup()
+  Aptic.collector = { run = function(sink, opts)
+    sink:begin({ taken_at = opts.taken_at, capabilities = { 'characters' }, framework = 'qbox', inventory = 'ox_inventory' })
+    for i = 1, 450 do sink:add('characters', { char_id = 'c' .. i }) end -- two chunks written
+    sink:abort('pagination_stuck')
+    return nil, 'pagination_stuck'
+  end }
+  UP.snapshot_now()
+  eq(U().last.code, 'pagination_stuck')
+  eq(#cache_folders(), 0)
+  eq(#srv:requests('start'), 0)
+end)
+
+test('a collector refusing before begin (salt_not_pinned): dropped with that code', function()
+  UP.setup()
+  Aptic.collector = { run = function() return nil, 'salt_not_pinned' end }
+  UP.snapshot_now()
+  eq(U().last.code, 'salt_not_pinned')
+end)
