@@ -650,3 +650,41 @@ test('the log shows counts and reason codes only, never names or citizenids', fu
   contains(out, 'vehicles.state_unknown=1')
   for _, s in ipairs({ 'Marcus', 'ABC12345', 'LSPD 042', 'Zoë' }) do not_contains(out, s) end
 end)
+
+-- ---------------------------------------------------------------------------
+-- Scaled fixtures (the end-to-end test repeats the fixture databases)
+-- ---------------------------------------------------------------------------
+
+local function scaled(case)
+  local F = case.setup({ copies = 3 })
+  eq(F.copies, 3)
+  local sink, summary = C.run()
+  all_valid(sink)
+  eq(summary.counts.characters, case.characters)
+  eq(summary.counts.vehicles, case.vehicles)
+  eq(keys_of(summary.skipped.reasons), keys_of(case.reasons))
+  for k, n in pairs(case.reasons) do eq(summary.skipped.reasons[k], n, k) end
+  local ids, plates, hashes = {}, {}, {}
+  for _, row in ipairs(C.rows(sink, 'characters')) do
+    falsy(ids[row.char_id], row.char_id)
+    ids[row.char_id] = true
+    hashes[row.player_hash] = true
+  end
+  for _, row in ipairs(C.rows(sink, 'vehicles')) do falsy(plates[row.plate], row.plate); plates[row.plate] = true end
+  -- Licenses differ per copy, so each copy is a different set of players.
+  eq(count(hashes), case.players)
+  local list = C.identifiers(F)
+  truthy(#list > 10, 'identifiers listed')
+  local recorded = C.recorded_json(sink)
+  for _, v in ipairs(list) do not_contains(recorded, v) end
+end
+
+test('Qbox fixture repeated 3 times: every edge case once per copy, keys still unique', function()
+  scaled({ setup = C.qbox, characters = 8 + 7 * 2, vehicles = 6 * 3, players = 7 + 6 * 2,
+    reasons = { ['vehicles.state_unknown'] = 3 } })
+end)
+
+test('QBCore fixture repeated 3 times: every edge case once per copy, keys still unique', function()
+  scaled({ setup = C.qbcore, characters = 4 * 3, vehicles = 3 * 3, players = 4 * 3,
+    reasons = { ['balances.currency_code_invalid'] = 3, ['vehicles.plate_duplicate'] = 3, ['vehicles.plate_invalid'] = 3 } })
+end)

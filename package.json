@@ -8,7 +8,12 @@
     "test": "node --test \"tests/js/*.test.mjs\" \"tests/lua/*.test.mjs\"",
     "test:js": "node --test \"tests/js/*.test.mjs\"",
     "test:lua": "node --test \"tests/lua/*.test.mjs\"",
-    "test:integration": "node tests/integration/heartbeat.integration.mjs"
+    "test:integration": "node tests/integration/e2e.integration.mjs",
+    "test:integration:qbox": "node tests/integration/e2e.integration.mjs qbox",
+    "test:integration:qbcore": "node tests/integration/e2e.integration.mjs qbcore",
+    "test:integration:heartbeat": "node tests/integration/heartbeat.integration.mjs",
+    "test:integration:upload": "node tests/integration/upload.integration.mjs",
+    "release": "node scripts/release.mjs"
   },
   "engines": {
     "node": ">=22"

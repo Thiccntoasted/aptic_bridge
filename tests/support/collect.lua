@@ -71,6 +71,93 @@ function C.install_db(F, opts)
   Stub.start('oxmysql', '2.13.0')
 end
 
+--- The fixture `F` repeated `copies` times (copy 0 is the original, so the
+--- online players and txAdmin entries keep matching it). Each copy k gets
+--- its own citizenids (`<id>-k`), licenses (last 6 hex replaced by k), row
+--- ids and plates (`<plate> k`, so a duplicate pair stays a pair and an
+--- over-long plate stays over-long); names, money, jobs and times repeat.
+--- Every edge case in the fixture therefore appears `copies` times.
+function C.scale(F, copies)
+  copies = math.max(1, math.floor(tonumber(copies) or 1))
+  if copies == 1 then return F end
+  local function suffix(id, k)
+    if type(id) ~= 'string' or id == '' then return id end
+    return id .. ('-%d'):format(k)
+  end
+  local function license(l, k)
+    if type(l) ~= 'string' then return l end
+    return (l:gsub('%x%x%x%x%x%x$', ('%06x'):format(k)))
+  end
+  local function plate(p, k)
+    if type(p) ~= 'string' then return p end
+    local lead, body, trail = p:match('^(%s*)(.-)(%s*)$')
+    return lead .. body .. ' ' .. k .. trail
+  end
+  local players, vehicles = copy(F.players), copy(F.vehicles)
+  for k = 1, copies - 1 do
+    for _, p in ipairs(F.players) do
+      local row = copy(p)
+      row.id = p.id + k * 1000
+      if row.userId then row.userId = p.userId + k * 1000 end
+      row.citizenid = suffix(p.citizenid, k)
+      row.license = license(p.license, k)
+      players[#players + 1] = row
+    end
+    for _, v in ipairs(F.vehicles) do
+      local row = copy(v)
+      row.id = v.id + k * 1000
+      row.citizenid = suffix(v.citizenid, k)
+      row.license = license(v.license, k)
+      row.plate = plate(v.plate, k)
+      vehicles[#vehicles + 1] = row
+    end
+  end
+  local out = copy(F)
+  out.players, out.vehicles = players, vehicles
+  out.copies = copies
+  return out
+end
+
+--- Every identifier in a (scaled) fixture that must never reach Aptic or a
+--- log: licenses (whole and their hex), the FiveM account names, phone
+--- numbers and the private values in the columns the collector must not read.
+function C.identifiers(F)
+  local out, seen = {}, {}
+  local function add(v)
+    if type(v) == 'string' and #v >= 6 and not seen[v] then
+      seen[v] = true
+      out[#out + 1] = v
+    end
+  end
+  local function from_json_text(text)
+    if type(text) ~= 'string' then return end
+    for _, field in ipairs({ 'phone', 'fingerprint', 'account', 'walletid', 'phone_number' }) do
+      for v in text:gmatch('"' .. field .. '"%s*:%s*"([^"]+)"') do add(v) end
+    end
+  end
+  for _, p in ipairs(F.players) do
+    add(p.license)
+    if type(p.license) == 'string' then add(p.license:match(':(%x+)$')) end
+    add(p.name)
+    add(p.phone_number)
+    from_json_text(p.metadata)
+    from_json_text(p.charinfo)
+  end
+  for _, v in ipairs(F.vehicles) do add(v.license) end
+  local online = {}
+  for _, o in pairs(F.online or {}) do online[#online + 1] = o.PlayerData or o end
+  for _, o in ipairs(online) do
+    add(o.license)
+    if type(o.license) == 'string' then add(o.license:match(':(%x+)$')) end
+    add(o.name)
+    for _, t in ipairs({ o.charinfo or {}, o.metadata or {} }) do
+      for _, field in ipairs({ 'phone', 'fingerprint', 'account' }) do add(t[field]) end
+    end
+  end
+  table.sort(out)
+  return out
+end
+
 local function txadmin_on()
   Stub.start('monitor', '8.0.1')
   Stub.convars.txDataPath = 'tests/fixtures/txData'
@@ -80,7 +167,7 @@ end
 function C.qbox(opts)
   opts = opts or {}
   H.server({ framework = 'qbox', inventory = 'ox_inventory', salt = opts.salt })
-  local F = dofile('tests/fixtures/qbox.lua')
+  local F = C.scale(dofile('tests/fixtures/qbox.lua'), opts.copies)
   C.install_db(F, opts)
   Stub.export_overrides.GetPlayersData = function() return copy(F.online) end
   Stub.export_overrides.GetJobs = function() return copy(F.jobs) end
@@ -94,7 +181,7 @@ end
 function C.qbcore(opts)
   opts = opts or {}
   H.server({ framework = 'qbcore', inventory = 'qb-inventory', salt = opts.salt })
-  local F = dofile('tests/fixtures/qbcore.lua')
+  local F = C.scale(dofile('tests/fixtures/qbcore.lua'), opts.copies)
   C.install_db(F, opts)
   local core = {
     Functions = { GetQBPlayers = function() return copy(F.online) end },
