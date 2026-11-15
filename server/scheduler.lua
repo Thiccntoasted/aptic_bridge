@@ -122,7 +122,8 @@ function M.step()
   if why then
     S.last_skip = { at = t, reason = why }
     if M.has_collector() then
-      log().change('schedule', 'warn', 'Snapshot slot skipped: %s. Next slot %s.', why, Aptic.time.iso(S.next_slot))
+      -- Once per reason, not every slot; `aptic upload status` has the next slot.
+      log().change('schedule', 'warn', 'Snapshot slot skipped: %s.', why)
     end
     return false
   end

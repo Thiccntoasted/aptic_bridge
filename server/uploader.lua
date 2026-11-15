@@ -631,7 +631,9 @@ function M.handle(result, now_ms)
   U.next_at = now_ms + cfg().pace_ms
 
   if d.action == 'ok' then
-    U.failures = 0
+    -- A status answer alone doesn't end an outage: the backoff keeps growing
+    -- until a start, chunk or finalize gets through.
+    if op ~= 'status' then U.failures = 0 end
     local json = result.json
     if op == 'start' then
       if json.status == 'complete' then
